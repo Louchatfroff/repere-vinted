@@ -22,7 +22,12 @@ def main():
     if not re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9_.-]+", args.repository):
         parser.error("Expected OWNER/NAME")
     try:
-        run("gh", "auth", "status")
+        # Query the identity used for actual API calls. `auth status` also fails
+        # when an unrelated, inactive saved account has an expired token.
+        login = run("gh", "api", "--hostname", "github.com", "user", "--jq", ".login", capture=True).stdout.strip()
+        if not login:
+            raise RuntimeError("GitHub did not return an authenticated account.")
+        print("Active GitHub account:", login)
         if run("git", "status", "--porcelain", capture=True).stdout.strip():
             raise RuntimeError("Commit the reviewed source changes before publishing.")
         files = run("git", "ls-files", capture=True).stdout.splitlines()
