@@ -19,14 +19,9 @@ The client stores the shared activation key in `data/connection.json` (owner-onl
 
 ## Distribution
 
-Publish only this directory to a private repository. Do not publish the owner collector to the friends' repository. A publication helper is provided:
+The client is in the private repository https://github.com/antoinebrnl/repere-vinted. Invite friends from **Settings > Collaborators** and have them accept the invitation before cloning. Keep the separate `repere-service` project and the activation key private.
 
-```
-gh auth login
-python3 publish_private.py antoinebrnl/repere-vinted
-```
-
-The helper requires reviewed source committed in Git and creates a private repository. Invite friends through GitHub Settings > Collaborators, then they can clone it and use the launchers above. No repository has been published by this environment.
+Friends clone the client with `git clone https://github.com/antoinebrnl/repere-vinted.git`, then follow the Start steps above. Do not commit or share the local `data/` folder.
 
 ## Settings and data
 
