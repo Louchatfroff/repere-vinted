@@ -420,7 +420,7 @@ def make_handler(store, monitor, port, connection=None):
                 elif self.path == "/api/connection":
                     if connection is None: raise ValueError("Connexion indisponible.")
                     monitor.control("stop")
-                    connection.save(data.get("url", ""), data.get("api_key", ""))
+                    connection.save(data.get("url", ""), data.get("activation_key", data.get("api_key", "")))
                     return self.respond(connection.public())
                 elif self.path == "/api/connection/test":
                     try: return self.respond(monitor.provider.verify())
