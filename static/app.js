@@ -187,5 +187,5 @@ for(const kind of ['items','config'])$('#import-'+kind).addEventListener('change
 window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
 refresh();setInterval(refresh,5000);
 
-$('#save-connection').addEventListener('click',async()=>{try{await post('/api/connection',{url:$('#service-url').value,api_key:$('#service-key').value});$('#service-key').value='';toast('Connexion enregistrée.');await refresh();}catch(e){toast(e.message,true);}});
+$('#save-connection').addEventListener('click',async()=>{try{await post('/api/connection',{url:$('#service-url').value,activation_key:$('#service-key').value});$('#service-key').value='';toast('Connexion enregistrée.');await refresh();}catch(e){toast(e.message,true);}});
 $('#test-connection').addEventListener('click',async()=>{try{await post('/api/connection/test',{});toast('Accès au service confirmé.');}catch(e){toast(e.message,true);}});
