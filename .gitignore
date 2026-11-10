@@ -1,0 +1,12 @@
+data/
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+.env
+.env.*
+*.sqlite3*
+*.log
+test-artifacts/
+dist/
+node_modules/

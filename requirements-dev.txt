@@ -1,0 +1,2 @@
+# Optional browser tests only. The application itself has no external dependencies.
+playwright==1.56.0
