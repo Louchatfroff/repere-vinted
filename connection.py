@@ -27,7 +27,7 @@ class Connection:
 
     def public(self):
         data = self.read()
-        return {"url": data.get("url", ""), "configured": bool(data.get("url") and data.get("api_key"))}
+        return {"url": data.get("url", ""), "configured": bool(data.get("url") and (data.get("activation_key") or data.get("api_key")))}
 
     def save(self, url, key):
         url, key = str(url).strip().rstrip("/"), str(key).strip()
@@ -36,15 +36,15 @@ class Connection:
             raise ValueError("Adresse attendue : https://nom.sous-domaine.workers.dev")
         with self.lock:
             old = self.read()
-            if not key and old.get("url") == url: key = old.get("api_key", "")
-            if not re.fullmatch(r"rp_[A-Za-z0-9_-]{40,100}", key):
-                raise ValueError("Colle la clé personnelle rp_… fournie par le propriétaire du service.")
+            if not key and old.get("url") == url: key = old.get("activation_key", old.get("api_key", ""))
+            if not re.fullmatch(r"[A-Za-z0-9_-]{40,100}", key):
+                raise ValueError("Colle la clé d'activation fournie par le propriétaire du service.")
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_name(self.path.name + "." + secrets.token_hex(8))
             fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as output:
-                    json.dump({"url": url, "api_key": key}, output)
+                    json.dump({"url": url, "activation_key": key}, output)
                 os.replace(str(tmp), str(self.path))
             finally:
                 if tmp.exists(): tmp.unlink()
@@ -62,11 +62,12 @@ class RemoteProvider:
 
     def request(self, path, body=None):
         settings = self.connection.read() if self.connection else {}
-        if not settings.get("url") or not settings.get("api_key"):
-            raise ProviderError("Configure l'adresse du service et ta clé dans Données & connexion.", blocked=True)
+        activation = settings.get("activation_key", settings.get("api_key", ""))
+        if not settings.get("url") or not activation:
+            raise ProviderError("Configure l'adresse du service et ta clé d'activation dans Données & connexion.", blocked=True)
         data = json.dumps(body).encode() if body is not None else None
         request = urllib.request.Request(settings["url"] + path, data=data,
-            headers={"Authorization": "Bearer " + settings["api_key"], "Content-Type": "application/json", "Accept": "application/json"})
+            headers={"Authorization": "Bearer " + activation, "Content-Type": "application/json", "Accept": "application/json", "User-Agent": "Repere/2.0 (local monitoring client)"})
         try:
             with self.opener.open(request, timeout=50) as response:
                 self.last_http = response.status
@@ -75,8 +76,12 @@ class RemoteProvider:
                 payload = json.loads(raw)
         except urllib.error.HTTPError as error:
             self.last_http = error.code
-            if error.code in [401, 403]: raise ProviderError("Accès au service refusé : clé inconnue, expirée ou révoquée. Contacte son propriétaire.", blocked=True)
-            try: detail = json.loads(error.read(4096)).get("error", "")
+            try: raw_error = error.read(4096).decode(errors="replace")
+            except (AttributeError, OSError, KeyError): raw_error = ""
+            if error.code == 403 and ("1010" in raw_error or "browser signature" in raw_error.lower()):
+                raise ProviderError("Cloudflare a bloqué la requête de Repère (erreur 1010). Mets à jour Repère et relance-le.", blocked=True)
+            if error.code in [401, 403]: raise ProviderError("Clé d'activation invalide ou remplacée. Demande la clé actuelle au propriétaire.", blocked=True)
+            try: detail = json.loads(raw_error).get("error", "")
             except (ValueError, AttributeError): detail = ""
             if error.code == 429:
                 try: retry = min(86400, max(5, int(error.headers.get("Retry-After", "300"))))
