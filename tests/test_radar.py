@@ -79,7 +79,7 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(item(price={"amount":"62.50", "currency_code":"EUR"})["price"], 62.5)
 
     def test_config_validation(self):
-        self.assertEqual(validate_config(DEFAULT_CONFIG)["interval_seconds"], 300)
+        self.assertEqual(validate_config(DEFAULT_CONFIG)["interval_seconds"], 60)
         for value in [0, float("nan"), 10, 90000]:
             with self.assertRaises(ValueError): validate_config(dict(DEFAULT_CONFIG, interval_seconds=value))
         c = copy.deepcopy(DEFAULT_CONFIG)
@@ -184,6 +184,7 @@ class StoreTests(unittest.TestCase):
         config = self.store.get("config")
         config["profiles"][0]["queries"]=["sodimm"]
         config["pages"]=3
+        config["per_page"]=1
         self.store.set("config",config)
         provider=Provider(); monitor=Monitor(self.store,provider)
         monitor.control("start")
@@ -191,6 +192,33 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(provider.calls,[1,2,3])
         self.assertEqual(monitor.last_count,3)
         self.assertEqual(self.store.listing()[0]["profile_ids"],["ddr5"])
+
+    def test_latest_pages_first_and_duplicate_queries_share_request(self):
+        calls=[]
+        class Provider:
+            def search(self, query, profile, **kwargs):
+                calls.append((query,kwargs["page"]))
+                return [dict(item(),id=query+str(kwargs["page"]))]
+        config=self.store.get("config")
+        config["profiles"][0]["queries"]=["first","second","first"]
+        config.update(pages=3,per_page=1)
+        self.store.set("config",config)
+        monitor=Monitor(self.store,Provider());monitor.control("start")
+        with patch.object(monitor.stop_event,"wait",return_value=False):monitor.tick()
+        self.assertEqual(calls,[(q,p) for p in (1,2,3) for q in ("first","second")])
+
+    def test_incomplete_page_stops_deeper_requests(self):
+        calls=[]
+        class Provider:
+            def search(self, query, profile, **kwargs):
+                calls.append(kwargs["page"])
+                return [item()]
+        config=self.store.get("config")
+        config["profiles"][0]["queries"]=["ram"]
+        config.update(pages=5,per_page=48)
+        self.store.set("config",config)
+        monitor=Monitor(self.store,Provider());monitor.control("start");monitor.tick()
+        self.assertEqual(calls,[1])
 
 
 class ProviderTests(unittest.TestCase):
