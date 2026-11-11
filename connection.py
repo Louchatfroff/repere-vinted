@@ -24,7 +24,12 @@ class Connection:
     def read(self):
         with self.lock:
             if not self.path.exists(): return {}
-            try: return json.loads(self.path.read_text(encoding="utf-8"))
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                # Migrate the placeholder URL used by the first client builds.
+                if data.get("url") == "https://repere-service.compte.workers.dev":
+                    data["url"] = DEFAULT_SERVICE_URL
+                return data
             except (ValueError, OSError): return {}
 
     def public(self):
