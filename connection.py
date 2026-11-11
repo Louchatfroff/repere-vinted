@@ -8,6 +8,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+DEFAULT_SERVICE_URL = "https://repere-service.acadavenir-contact-a5a.workers.dev"
+
 
 class ProviderError(Exception):
     def __init__(self, message, blocked=False, retry=0):
@@ -22,12 +24,19 @@ class Connection:
     def read(self):
         with self.lock:
             if not self.path.exists(): return {}
-            try: return json.loads(self.path.read_text(encoding="utf-8"))
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                # Migrate the placeholder URL used by the first client builds.
+                if data.get("url") == "https://repere-service.compte.workers.dev":
+                    data["url"] = DEFAULT_SERVICE_URL
+                return data
             except (ValueError, OSError): return {}
 
     def public(self):
         data = self.read()
-        return {"url": data.get("url", ""), "configured": bool(data.get("url") and (data.get("activation_key") or data.get("api_key")))}
+        # Pre-fill the owner's deployed endpoint so friends don't accidentally
+        # enter the illustrative workers.dev URL shown in older instructions.
+        return {"url": data.get("url") or DEFAULT_SERVICE_URL, "configured": bool(data.get("url") and (data.get("activation_key") or data.get("api_key")))}
 
     def save(self, url, key):
         url, key = str(url).strip().rstrip("/"), str(key).strip()
@@ -90,8 +99,14 @@ class RemoteProvider:
             if error.code in [400, 404, 409, 422, 503]:
                 raise ProviderError("Service indisponible : " + (str(detail)[:250] or "configuration à vérifier"), blocked=True)
             raise ProviderError("Erreur du service distant (HTTP %s)." % error.code)
-        except urllib.error.URLError:
-            raise ProviderError("Service distant injoignable. Vérifie la connexion Internet et l'adresse configurée.")
+        except urllib.error.URLError as error:
+            reason = getattr(error, "reason", None)
+            reason_text = str(reason).lower()
+            if "name or service not known" in reason_text or "nodename nor servname" in reason_text or "temporary failure in name resolution" in reason_text or "getaddrinfo failed" in reason_text:
+                raise ProviderError("Adresse du service introuvable. Vérifie qu’elle est exactement https://repere-service.acadavenir-contact-a5a.workers.dev")
+            if "timed out" in reason_text or "timeout" in reason_text:
+                raise ProviderError("Le service ne répond pas à temps. Vérifie la connexion puis réessaie dans une minute.")
+            raise ProviderError("Connexion au service impossible. Vérifie Internet et l’adresse affichée dans Données & connexion.")
         except (ValueError, OSError):
             raise ProviderError("Réponse du service invalide ou délai dépassé.")
         if not isinstance(payload, dict): raise ProviderError("Format du service invalide.", blocked=True)
