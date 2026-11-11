@@ -41,8 +41,9 @@ class Connection:
     def save(self, url, key):
         url, key = str(url).strip().rstrip("/"), str(key).strip()
         parsed = urllib.parse.urlparse(url)
-        if parsed.scheme != "https" or not re.fullmatch(r"[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev", parsed.netloc) or parsed.path or parsed.query or parsed.fragment:
-            raise ValueError("Adresse attendue : https://nom.sous-domaine.workers.dev")
+        local = url == "http://127.0.0.1:8787"
+        if (not local and (parsed.scheme != "https" or not parsed.hostname)) or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
+            raise ValueError("Adresse attendue : une URL HTTPS de ton service, ou http://127.0.0.1:8787 pour le moteur local.")
         with self.lock:
             old = self.read()
             if not key and old.get("url") == url: key = old.get("activation_key", old.get("api_key", ""))
@@ -103,7 +104,7 @@ class RemoteProvider:
             reason = getattr(error, "reason", None)
             reason_text = str(reason).lower()
             if "name or service not known" in reason_text or "nodename nor servname" in reason_text or "temporary failure in name resolution" in reason_text or "getaddrinfo failed" in reason_text:
-                raise ProviderError("Adresse du service introuvable. Vérifie qu’elle est exactement https://repere-service.acadavenir-contact-a5a.workers.dev")
+                raise ProviderError("Adresse du service introuvable. Vérifie le nom du serveur configuré.")
             if "timed out" in reason_text or "timeout" in reason_text:
                 raise ProviderError("Le service ne répond pas à temps. Vérifie la connexion puis réessaie dans une minute.")
             raise ProviderError("Connexion au service impossible. Vérifie Internet et l’adresse affichée dans Données & connexion.")
