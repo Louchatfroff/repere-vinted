@@ -92,10 +92,10 @@ class RemoteProvider:
             if error.code in [401, 403]: raise ProviderError("Clé d'activation invalide ou remplacée. Demande la clé actuelle au propriétaire.", blocked=True)
             try: detail = json.loads(raw_error).get("error", "")
             except (ValueError, AttributeError): detail = ""
-            if error.code == 429:
+            if error.code == 429 or (error.code == 503 and error.headers.get("Retry-After")):
                 try: retry = min(86400, max(5, int(error.headers.get("Retry-After", "300"))))
                 except ValueError: retry = 300
-                raise ProviderError("Limite du service atteinte. " + str(detail)[:180], retry=retry)
+                raise ProviderError("Collecte en pause. " + str(detail)[:250], retry=retry)
             if error.code in [400, 404, 409, 422, 503]:
                 raise ProviderError("Service indisponible : " + (str(detail)[:250] or "configuration à vérifier"), blocked=True)
             raise ProviderError("Erreur du service distant (HTTP %s)." % error.code)
