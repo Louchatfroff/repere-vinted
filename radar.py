@@ -40,7 +40,7 @@ GENERIC_PROFILE = dict(copy.deepcopy(DEFAULT_PROFILE), id="general", name="Nouve
     capacities=[], max_per_gb=0, max_price=200, exclude=["defectueux", "pour pieces"],
     resale_target=0, resale_capacity=0, min_margin=0)
 DEFAULT_APPEARANCE = {"theme": "light", "accent": "copper", "density": "comfortable", "layout": "list", "show_margin": True, "show_score": False}
-DEFAULT_CONFIG = {"interval_seconds": 300, "per_page": 48, "pages": 1, "notify_initial": False, "appearance": DEFAULT_APPEARANCE, "profiles": [DEFAULT_PROFILE,
+DEFAULT_CONFIG = {"interval_seconds": 60, "per_page": 48, "pages": 1, "notify_initial": False, "appearance": DEFAULT_APPEARANCE, "profiles": [DEFAULT_PROFILE,
     dict(copy.deepcopy(DEFAULT_PROFILE), id="ddr4", name="SO-DIMM DDR4", enabled=False,
          generations=[4], queries=["sodimm ddr4", "ram portable ddr4"], max_price=40,
          max_per_gb=3, resale_target=0, min_margin=0)]}
@@ -150,15 +150,16 @@ def evaluate(item, profile):
     for key, field in [("min_rating", "rating"), ("min_reviews", "reviews")]:
         if profile[key] and (item[field] is None or item[field] < profile[key]): reasons.append("Informations vendeur insuffisantes : " + field)
     landed = round(item["price"] * (1 + profile["buyer_fee_percent"] / 100) + profile["buyer_fee_fixed"] + profile["shipping"] + profile["conversion_cost"], 2)
+    landed_per_gb = round(landed / s["capacity"], 2) if ram and s["capacity"] else None
     margin = round(profile["resale_target"] - landed - profile["selling_cost"], 2) if profile["resale_target"] > 0 and (not ram or s["capacity"] == profile["resale_capacity"]) else None
     if profile["margin_only"] and (margin is None or margin < profile["min_margin"]): reasons.append("Marge cible non atteinte ou inconnue")
     score = min(100, round(35 + (15 if ram and s["capacity"] else 0) + (10 if ram and s["speed"] else 0) +
-                  (max(0, 25 * (1 - per_gb / profile["max_per_gb"])) if per_gb is not None and profile["max_per_gb"] else 0) +
+                  (max(0, 25 * (1 - landed_per_gb / profile["max_per_gb"])) if per_gb is not None and profile["max_per_gb"] else 0) +
                   (15 if margin is not None and margin >= profile["min_margin"] else 0)))
     if not ram:
         score = round(50 + max(0, 35 * (1 - item["price"] / max(1, profile["max_price"]))) + (15 if margin is not None and margin >= profile["min_margin"] else 0))
     return {"matched": not reasons, "reasons": reasons, "kind": profile["kind"], "specs": s if ram else {}, "per_gb": per_gb, "landed": landed,
-            "margin": margin, "score": score, "profile_id": profile["id"], "profile_name": profile["name"]}
+            "landed_per_gb": landed_per_gb, "margin": margin, "score": score, "profile_id": profile["id"], "profile_name": profile["name"]}
 
 
 def validate_config(config):
@@ -321,29 +322,39 @@ class Monitor:
             if time.time() < self.next_run: return
             self.busy = True
         config = self.store.get("config")
+        cycle_started = time.time()
         try:
-            jobs = [(p, q, page) for p in config["profiles"] if p["enabled"] for q in p["queries"] for page in range(1, config["pages"] + 1)]
+            jobs = [(p, q, page) for page in range(1, config["pages"] + 1) for p in config["profiles"] if p["enabled"] for q in p["queries"]]
             if not jobs: raise ProviderError("Active au moins un profil.", blocked=True)
             count = 0
             cycle_results = {}
+            exhausted = set()
+            fetched = False
             for index, (profile, query, page) in enumerate(jobs):
                 with self.lock:
                     if not self.running: return
                     self.current_query = query + " · page " + str(page)
                 request_key = json.dumps([query, page, config["per_page"], *[profile[k] for k in ["min_price", "max_price", "catalog_ids", "brand_ids", "size_ids", "status_ids"]]], sort_keys=True)
+                series_key = json.dumps([query, *[profile[k] for k in ["min_price", "max_price", "catalog_ids", "brand_ids", "size_ids", "status_ids"]]], sort_keys=True)
+                if (series_key, page) in exhausted: continue
                 if request_key not in cycle_results:
+                    if fetched and self.stop_event.wait(2): return
+                    with self.lock:
+                        if not self.running: return
+                    fetched = True
                     cycle_results[request_key] = self.provider.search(query, profile, page=page, per_page=config["per_page"])
                 items = cycle_results[request_key]
+                if len(items) < config["per_page"]:
+                    exhausted.update((series_key, later) for later in range(page + 1, config["pages"] + 1))
                 baseline_key = "baseline:" + json.dumps([profile["id"], query, page, profile["catalog_ids"], profile["brand_ids"], profile["size_ids"], profile["status_ids"], profile["min_price"], profile["max_price"], config["per_page"]], sort_keys=True)
                 notify = config["notify_initial"] or bool(self.store.get(baseline_key))
                 self.store.ingest(items, "vinted", notify=notify, profile_id=profile["id"])
                 self.store.set(baseline_key, True)
                 count += len(items)
-                if index < len(jobs) - 1 and self.stop_event.wait(2): break
             with self.lock:
                 self.error, self.failures, self.last_run = "", 0, now()
                 self.last_count, self.cycles = count, self.cycles + 1
-                self.next_run = time.time() + config["interval_seconds"]
+                self.next_run = max(time.time() + 2, cycle_started + config["interval_seconds"])
         except Exception as error:
             with self.lock:
                 self.failures += 1
