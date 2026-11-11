@@ -325,11 +325,15 @@ class Monitor:
             jobs = [(p, q, page) for p in config["profiles"] if p["enabled"] for q in p["queries"] for page in range(1, config["pages"] + 1)]
             if not jobs: raise ProviderError("Active au moins un profil.", blocked=True)
             count = 0
+            cycle_results = {}
             for index, (profile, query, page) in enumerate(jobs):
                 with self.lock:
                     if not self.running: return
                     self.current_query = query + " · page " + str(page)
-                items = self.provider.search(query, profile, page=page, per_page=config["per_page"])
+                request_key = json.dumps([query, page, config["per_page"], *[profile[k] for k in ["min_price", "max_price", "catalog_ids", "brand_ids", "size_ids", "status_ids"]]], sort_keys=True)
+                if request_key not in cycle_results:
+                    cycle_results[request_key] = self.provider.search(query, profile, page=page, per_page=config["per_page"])
+                items = cycle_results[request_key]
                 baseline_key = "baseline:" + json.dumps([profile["id"], query, page, profile["catalog_ids"], profile["brand_ids"], profile["size_ids"], profile["status_ids"], profile["min_price"], profile["max_price"], config["per_page"]], sort_keys=True)
                 notify = config["notify_initial"] or bool(self.store.get(baseline_key))
                 self.store.ingest(items, "vinted", notify=notify, profile_id=profile["id"])
